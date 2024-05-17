@@ -1,0 +1,138 @@
+default:
+  before_script:
+    - echo $DJED_CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER --password-stdin $CI_REGISTRY
+
+variables:
+  IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
+  REMOTE_ROOT_PATH: "/www/html/e-user-api"
+  
+stages:
+  - build
+  - test
+  - deploy
+
+packages:
+  stage: build
+  tags:
+    - staging
+  script:
+    - echo "build docker image $IMAGE_TAG"
+    - docker build -f CICD/Dockerfile -t $IMAGE_TAG .
+    - docker push $IMAGE_TAG
+    - echo "remove all dangling images"
+    - docker image prune -f
+
+phpunit:
+  stage: test
+  tags:
+    - staging
+  dependencies:
+    - packages
+
+  script:
+    - PHPUNIT="vendor/bin/phpunit --coverage-text --colors=never --testsuite Unit"
+    - echo "run phpunit from docker image $IMAGE_TAG"
+    - docker run -a stdout --rm $IMAGE_TAG /bin/sh -c "$PHPUNIT"
+
+codestyle:
+  stage: test
+  tags:
+    - staging
+  dependencies:
+    - packages
+  script:
+    - SNIFFER="vendor/bin/phpcs -s --colors --standard=PSR12 --extensions=php --ignore=app/Support/helpers.php app"
+    - echo "run php code sniffer from docker image $IMAGE_TAG"
+    # - docker run -a stdout --rm $IMAGE_TAG /bin/sh -c "$SNIFFER"
+
+.init_ssh: &init_ssh |
+  mkdir -p ~/.ssh
+  chmod 700 ~/.ssh
+  touch ~/.ssh/id_ed25519
+  echo "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+  chmod 600 ~/.ssh/id_ed25519
+  [[ -f /.dockerenv ]] && echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config
+  eval $(ssh-agent -s)
+  ssh-add ~/.ssh/id_ed25519
+
+.clone_application_on_remote_server: &clone_application_on_remote_server |
+  TMP_DIR="/tmp/builds/djed/e-user-api/$CI_COMMIT_REF_SLUG"
+  REMOTE_RELEASE_PATH=$REMOTE_ROOT_PATH/$CI_COMMIT_REF_SLUG/releases/$(date '+%Y%m%d%H%M%S')
+  APP_REMOTE_PATH="$REMOTE_ROOT_PATH/$CI_COMMIT_REF_SLUG/e-user-api"
+
+  mkdir -p $TMP_DIR
+  SERVICE_NAME="$CI_COMMIT_REF_SLUG" envsubst '${SERVICE_NAME}' < ./CICD/docker-compose-template.yml > ./CICD/docker-compose.yml
+  tar -zcf $TMP_DIR/e-user-api.languelite.com.tar.gz ./CICD || exit $?
+  echo "successfully compressed CICD folder"
+
+  ssh $REMOTE_USERNAME@$REMOTE_IP -p $REMOTE_PORT /bin/bash <<EOF
+  [ -d $REMOTE_RELEASE_PATH ] || mkdir -p $REMOTE_RELEASE_PATH || exit $?
+  echo "successfully created release directory on remote server"
+  EOF
+  
+  scp -P $REMOTE_PORT -o StrictHostKeyChecking=no -r $TMP_DIR/e-user-api.languelite.com.tar.gz $REMOTE_USERNAME@$REMOTE_IP:$REMOTE_RELEASE_PATH || exit $?
+  rm -rf $TMP_DIR
+  echo "successfully sent CICD folder on remote server"
+
+  echo "cloning CICD directory"
+  ssh $REMOTE_USERNAME@$REMOTE_IP -p $REMOTE_PORT /bin/bash <<EOF
+  tar -zxf $REMOTE_RELEASE_PATH/e-user-api.languelite.com.tar.gz --directory $REMOTE_RELEASE_PATH
+  echo $DJED_CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER --password-stdin $CI_REGISTRY
+  docker pull $IMAGE_TAG
+  ln -nfs $REMOTE_RELEASE_PATH/CICD $APP_REMOTE_PATH
+  EOF
+
+.scale_application_on_remote_server: &scale_application_on_remote_server |
+  ssh $REMOTE_USERNAME@$REMOTE_IP -p $REMOTE_PORT /bin/bash <<EOF
+  cp $REMOTE_ROOT_PATH/$CI_COMMIT_REF_SLUG/config/docker-compose.env $APP_REMOTE_PATH/.env
+  cp $REMOTE_ROOT_PATH/$CI_COMMIT_REF_SLUG/config/laravel.env $APP_REMOTE_PATH/laravel.env
+
+  docker-compose -f $APP_REMOTE_PATH/docker-compose.yml up -d --scale $CI_COMMIT_REF_SLUG=2 --no-recreate
+  sleep 40
+  docker-compose -f $APP_REMOTE_PATH/docker-compose.yml up -d --scale $CI_COMMIT_REF_SLUG=1 --no-recreate
+  echo "successfully scaled application"
+ 
+  docker images | grep $CI_REGISTRY_IMAGE | grep none  | awk '{print \$3}' | xargs docker rmi || exit $?
+  cd  $REMOTE_RELEASE_PATH/../ && ls -t | tail -n +3 | xargs rm -rf
+  echo "successfully purge old releases"
+  EOF
+
+dev:
+  stage: deploy
+  tags:
+    - staging
+  dependencies:
+    - codestyle
+    - phpunit
+  script:
+    - REMOTE_USERNAME="deployer"
+    - REMOTE_IP="67.43.226.230"
+    - REMOTE_PORT=2243
+    - *init_ssh
+    - *clone_application_on_remote_server
+    - *scale_application_on_remote_server
+  environment:
+    name: "development"
+    url: http://e-user-api-dev.languelite.com
+  only:
+    - development
+
+prod:
+  stage: deploy
+  tags:
+    - staging
+  dependencies:
+    - codestyle
+    - phpunit
+  script:
+    - REMOTE_USERNAME="deployer"
+    - REMOTE_IP="67.43.226.230"
+    - REMOTE_PORT=2243
+    - *init_ssh
+    - *clone_application_on_remote_server
+    - *scale_application_on_remote_server
+  environment:
+    name: "production"
+    url: http://e-user-api.languelite.com
+  only:
+    - production

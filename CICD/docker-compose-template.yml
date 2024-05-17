@@ -1,0 +1,50 @@
+version: "3.6"
+services:
+  $SERVICE_NAME:
+    image: "${IMAGE_TAG}"
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.e-user-api-${ENVIRONMENT}-http.entrypoints=web"
+      - "traefik.http.routers.e-user-api-${ENVIRONMENT}-http.rule=Host(`${HOST}`)"
+      - "traefik.http.routers.e-user-api-${ENVIRONMENT}-http.middlewares=e-user-api-${ENVIRONMENT}"
+      - "traefik.http.middlewares.e-user-api-${ENVIRONMENT}.redirectscheme.scheme=https"
+      - "traefik.http.routers.e-user-api-${ENVIRONMENT}.tls=true"
+      - "traefik.http.routers.e-user-api-${ENVIRONMENT}.tls.certresolver=languelite-resolver"
+      - "traefik.http.routers.e-user-api-${ENVIRONMENT}.rule=Host(`${HOST}`)"
+      - "traefik.http.routers.e-user-api-${ENVIRONMENT}.entrypoints=websecure"
+      - "traefik.http.routers.e-user-api-${ENVIRONMENT}.middlewares=stripprefix"
+      - "traefik.http.middlewares.stripprefix.stripprefix.prefixes=/"
+    volumes:
+      - "${APP_ENV_FILE}:/var/www/html/.env"
+    expose:
+      - "80"
+      - "443"
+    depends_on:
+      - masterdb.e-user-api
+
+  masterdb.e-user-api:
+    image: mysql:latest
+    container_name: "masterdb.${HOST}"
+    command: --default-authentication-plugin=mysql_native_password
+    hostname: "masterdb.${HOST}"
+    restart: always
+    labels:
+      - "traefik.enable=false"
+    volumes:
+      - devdb:/var/lib/mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: "${DB_ROOT_PASSWORD}"
+      MYSQL_PASSWORD: "${DB_PASSWORD}"
+      MYSQL_USER: "${DB_USERNAME}"
+      MYSQL_DATABASE: "${DB_DATABASE}"
+    expose:
+      - "3306"
+
+networks:
+  default:
+    external: true
+    name: "${NETWORK}"
+volumes:
+  devdb:
+    driver: local

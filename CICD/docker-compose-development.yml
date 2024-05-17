@@ -1,0 +1,45 @@
+version: "3.6"
+services:
+  e-user-api.dev:
+    image: "djed/development.e-user-api:${TAG}"
+    hostname: "dev.e-user-api.languelite.com"
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.e-user-api-dev.rule=Host(`e-user-api-dev.languelite.com`)"
+      - "traefik.http.routers.e-user-api-dev.entrypoints=web"
+      - "traefik.http.routers.e-user-api-dev.middlewares=stripprefix"
+      - "traefik.http.middlewares.stripprefix.stripprefix.prefixes=/"
+    volumes:
+      - "${LOG_PATH}:/www/html/e-user-api/storage/logs"
+      - /www/html/development/nginx/default:/etc/nginx/sites-available/default
+    ports:
+      - "127.0.0.1:7000-7001:80"
+    expose:
+      - "80"
+    depends_on:
+      - dev-masterdb.e-user-api.languelite.com
+
+  dev-masterdb.e-user-api.languelite.com:
+    image: mysql:latest
+    container_name: dev-masterdb.e-user-api.languelite.com
+    command: --default-authentication-plugin=mysql_native_password
+    hostname: "dev-masterdb.e-user-api.languelite.com"
+    restart: always
+    volumes:
+      - devdb:/var/lib/mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: "${DB_ROOT_PASSWORD}"
+      MYSQL_PASSWORD: "${DB_PASSWORD}"
+      MYSQL_USER: "${DB_USERNAME}"
+      MYSQL_DATABASE: "${DB_DATABASE}"
+    expose:
+      - "3306"
+
+networks:
+  default:
+    external: true
+    name: languelite
+volumes:
+  devdb:
+    driver: local
