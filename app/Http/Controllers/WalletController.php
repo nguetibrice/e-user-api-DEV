@@ -19,6 +19,7 @@ use App\Models\PaymentMethod;
 use App\Models\User;
 use App\Services\Contracts\IOrangeMoneyService;
 use App\Services\Contracts\IPaymentSessionService;
+use App\Services\Contracts\IPriceService;
 use App\Services\Contracts\IRechargeOrderService;
 use Ramsey\Uuid\Rfc4122\UuidV4;
 use Stripe\Customer;
@@ -33,18 +34,21 @@ class WalletController extends Controller
     protected IOrangeMoneyService $omService;
     protected IPaymentSessionService $paymentSessionService;
     protected IRechargeOrderService $rechargeOrderService;
+    protected IPriceService $priceService;
     public function __construct(
         ISubscriptionService $subscriptionService,
         IUserService $userService,
         IOrangeMoneyService $omService,
         ITransactionHistoryService $transactionHistoryService,
         IRechargeOrderService $rechargeOrderService,
+        IPriceService $priceService,
         IPaymentSessionService $paymentSessionService
     ) {
         $this->subscriptionService = $subscriptionService;
         $this->userService = $userService;
         $this->transactionHistoryService = $transactionHistoryService;
         $this->omService = $omService;
+        $this->priceService = $priceService;
         $this->paymentSessionService = $paymentSessionService;
         $this->rechargeOrderService = $rechargeOrderService;
     }
@@ -72,19 +76,20 @@ class WalletController extends Controller
             ]);
 
             $user = $this->userService->getUserFromGuard();
-            // $customer = verifyCustomer($user);
+            //
             $payment_method = $request->payment_method;
             $currency = env("CASHIER_CURRENCY");
             if (strtoupper($currency) == strtoupper($request->currency)) {
-                $amount = $request->amount;
+                $amount = (int) $request->amount;
             } else {
-                // todo: convert amount to default system amount
-                // $amount = convertCurrency($request->currency, $customer["default_currency"], $request->amount);
-                $amount = $request->amount;
+                $amount = round(convertCurrency($request->currency, (int) $request->amount));
             }
             switch ($payment_method["type"]) {
                 case 'card':
-                    $paymentMethod = $this->subscriptionService->createStripePaymentMethod($user, "card", $request->payment_method["card"]);
+                    $card = $request->payment_method["card"];
+                    $card["exp_month"] = (int) $card["exp_month"];
+                    $card["exp_year"] = (int) $card["exp_year"];
+                    $paymentMethod = $this->subscriptionService->createStripePaymentMethod($user, "card", $card);
                     $trx = processRecharge(
                         $user,
                         $amount,
@@ -97,7 +102,8 @@ class WalletController extends Controller
                     if ($trx->getError() != null) {
                         return Response::error("Erreur Lors de la recharge",400,['error' => $trx->getError()]);
                     }
-                    return Response::success(['balance' => $trx->getBalance()]);
+                    $customer = verifyCustomer($user);
+                    return Response::success(['balance' => strtoupper($customer["default_currency"])." " . (-1 * ( (int) $trx->getBalance())) ]);
                     break;
                 case 'OM':
                     $order_dto = new RechargeOrder(
@@ -112,11 +118,11 @@ class WalletController extends Controller
                     $ref = UuidV4::uuid4()->toString();
 
                     if (strtolower($request->currency) == "xaf") {
-                        $amount = $request->amount;
+                        $amount = (int) $request->amount;
                     } else {
                         // todo: convert amount to xaf
-                        // $amount = convertCurrency($request->currency, "xaf", $request->amount);
-                        $amount = $request->amount;
+                        $amount = round(convertCurrency("xaf", $request->amount));
+                        // $amount = $request->amount;
                     }
 
                     $data = [
@@ -293,7 +299,7 @@ class WalletController extends Controller
             //     // convert amount here to user default currency
             //     $amount = $request->amount; //review
             // }
-            $amount = $request->amount;
+            $amount = (int) $request->amount;
             if (($customer["balance"] * -1) < $amount) {
                 return Response::error("Solde Insuffisant", Status::HTTP_BAD_REQUEST);
             }
@@ -331,7 +337,7 @@ class WalletController extends Controller
             }
             // Log response
             return Response::success([
-                "balance" => $credit->getBalance(),
+                "balance" => strtoupper($customer["default_currency"])." " . (-1 * ( (int) $credit->getBalance())) ,
                 "message" => "Transfer Successful"
             ]);
 
@@ -418,15 +424,49 @@ class WalletController extends Controller
 
             ]);
             $user = $this->userService->getUserFromGuard();
-            $paymentMethod = $this->subscriptionService->createStripePaymentMethod($user, "om");
+            $customer = verifyCustomer($user);
+            $quantity = $request->quantity;
+            $price = $this->priceService->getPrice($request->price_id);
+            $amount = 0;
+            if ($quantity >= 10) {
+                foreach ($price["currency_options"][strtolower(env("CASHIER_CURRENCY"))]["tiers"] as $tier) {
+                    if ($tier["up_to"] == null) {
+                        $amount = $tier["unit_amount"];
+                    }
+                }
+            } else {
+                $nearest = null;
+                foreach ($price["currency_options"][strtolower(env("CASHIER_CURRENCY"))]["tiers"] as $tier) {
+                    if ($tier["up_to"] != null) {
+                        if ($tier["up_to"] >= $quantity) {
+                            // $amount = $tier["flat_amount"];
+                            if ($tier["up_to"] - $quantity < $nearest - $quantity || $nearest === null) {
+                                $amount = $tier["unit_amount"];
+                                $nearest = $tier["up_to"];
+                            }
+                        }
+                    }
+                }
+            }
+            if ($customer["balance"] >= 0 ) {
+                // negative wallet balance
+                return Response::error("Solde Insuffisant", Status::HTTP_BAD_REQUEST);
+            }
+            if (($customer["balance"] * -1) < ($amount * $quantity)) {
+                return Response::error("Solde Insuffisant", Status::HTTP_BAD_REQUEST);
+            }
+
             $subscription = $this->subscriptionService->makePayment(
                 $user,
                 $request->product_name,
                 $request->price_id,
-                $request->quantity,
-                $paymentMethod
+                $request->quantity
             );
-            return Response::success(['subscription' => $subscription]);;
+            $customer = verifyCustomer($user);
+            return Response::success([
+                'subscription' => $subscription,
+                'balance' => strtoupper($customer["default_currency"])." " . (-1 * ( (int) $customer["balance"])),
+            ]);
         } catch (\Stripe\Exception\RateLimitException $e) {
             Log::error(
                 "RATE LIMIT EXCEPTION:".

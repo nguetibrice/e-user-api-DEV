@@ -15,6 +15,7 @@ use App\Services\Contracts\ISubscriptionOrderService;
 use Laravel\Cashier\Cashier;
 use App\Services\Contracts\ISubscriptionService;
 use App\Services\Contracts\ITransactionHistoryService;
+use App\Services\Contracts\IUserLevelsService;
 use App\Services\Contracts\IUserService;
 use App\Services\CurrencyService;
 use App\Services\OrangeMoneyService;
@@ -25,6 +26,7 @@ use App\Services\RechargeOrderService;
 use App\Services\SubscriptionOrderService;
 use App\Services\SubscriptionService;
 use App\Services\TransactionHistoryService;
+use App\Services\UserLevelsService;
 use App\Services\UserService;
 use App\Wallet\Contracts\WalletContract;
 use App\Wallet\OrangeMoney\Wallet;
@@ -55,6 +57,7 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(IPaymentSessionService::class, PaymentSessionService::class);
         $this->app->singleton(ITransactionHistoryService::class, TransactionHistoryService::class);
         $this->app->singleton(IRechargeOrderService::class, RechargeOrderService::class);
+        $this->app->singleton(IUserLevelsService::class, UserLevelsService::class);
     }
 
     /**

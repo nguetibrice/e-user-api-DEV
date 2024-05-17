@@ -85,6 +85,11 @@ class UserController extends Controller
         return Response::success(['user' => $user]);
     }
 
+    public function getUserFromCip($cip)
+    {
+        $user = $this->userService->getUserByCip($cip);
+        return Response::success(['user' => $user]);
+    }
     /**
      * Update the password of the authenticated user.
      *
@@ -107,26 +112,6 @@ class UserController extends Controller
         $user = $this->userService->getUserFromGuard();
         $this->userService->updateUser($user, $password_update);
         return Response::success(['message' => Lang::get('User password updated')]);
-    }
-
-    public function updateGuardian(Request $request)
-    {
-        // $request->validate([
-        //     'password' => [
-        //         'required',
-        //         'string',
-        //         'min:8',
-        //         'regex:/^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@%-+_!.,@#$^&?%éè]).+$/'
-        //     ],
-        // ]);
-
-        $guardian_update =  [
-            'password' => $request->input('guardian'),
-        ];
-        $user = $this->userService->getUserFromGuard();
-        // $guardian= $this->userService->getGuardian();
-        $this->userService->updateUser($user, $guardian_update);
-        return Response::success(['message' => Lang::get('User guardian updated')]);
     }
 
     /**

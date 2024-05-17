@@ -76,8 +76,16 @@ interface IUserService extends IBaseService
      * @return User
      * @throws ModelException
      */
-    public function createAccount(User $user): User;
+    public function createAccount(User $user, $sendCode = true): User;
 
+    /**
+     * Updates an account and sends a pin to the user via email or sms in order to complete his registration
+     *
+     * @param User $user
+     * @return User
+     * @throws ModelException
+     */
+    public function updateAccount(User $user, $data): User;
     /**
      * Generates a bearer token
      *
@@ -143,4 +151,14 @@ interface IUserService extends IBaseService
      * @return User[]
      */
     public function getGodchildren(User $user, int $subscription_id = null);
+
+
+    /**
+     * Verify if user is suspended
+     *
+     * @return bool
+     */
+    public function verifySuspension(string $alias );
+
+
 }

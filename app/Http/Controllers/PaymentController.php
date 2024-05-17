@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\PaymentSession;
 use App\Dtos\PaymentSession as DtoPaymentSession;
+use App\Dtos\SubscriptionOrder as DtosSubscriptionOrder;
+use App\Mail\CompleteProfile;
 use App\Models\Subscription;
 use App\Models\SubscriptionOrder;
 use App\Models\User;
@@ -23,7 +25,9 @@ use App\Services\Contracts\ISubscriptionService;
 use App\Services\Contracts\ITransactionHistoryService;
 use App\Wallet\Stripe\Wallet;
 use Faker\Core\Uuid;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 use Lang;
 use Laravel\Cashier\Cashier;
 use Ramsey\Uuid\Rfc4122\UuidV4;
@@ -119,45 +123,26 @@ class PaymentController extends Controller
                             $user = $this->userService->getUserByAlias($order->user->alias);
                             $customer = verifyCustomer($user);
                             $amount =  $session->amount;
-
-                            $paymentMethod = $this->subscriptionService->createStripePaymentMethod($user, "om");
+                            // $equiv = convertCurrency("xaf", 1);
+                            // $amount = $equiv * $amount;
+                            // $paymentMethod = $this->subscriptionService->createStripePaymentMethod($user, "om");
                             $transaction = processRecharge(
                                 $user,
                                 $amount,
-                                $customer["default_currency"],
+                                env("CASHIER_CURRENCY"),
                                 "CREDIT",
                                 $this->transactionHistoryService,
                                 $this->userService,
-                                $paymentMethod
+                                // $paymentMethod
                             );
 
-                            Log::info(
-                                "STRIPE_CUSTOMER_ACCOUNT_CREDITED:". json_encode([
-                                    "transaction" => $transaction,
-                                    "customer" => $customer,
-                                    "amount" => $amount,
-                                    "price_id" => $order->price_id,
-                                    "user" => $user,
-                                ])
-                            );
                             if ($session->order_type == "SUBSCRIPTION") {
-                                $customer = $user->asStripeCustomer();
-                                Log::info("CUSTOMER:". json_encode($customer));
-                                $amount =  $session->amount;
-                                $paymentMethod = $this->subscriptionService->createStripePaymentMethod($user, "om");
-                                Log::info(
-                                    "STRIPE_PAYMENT_METHOD_CREATED: ". json_encode([
-                                        "paymentMethod" => $paymentMethod,
-                                        "customer" => $customer,
-                                        "user" => $user,
-                                    ])
-                                );
                                 $subscription = $this->subscriptionService->makePayment(
                                     $user,
                                     $order->product_name,
                                     $session->price_id,
                                     $order->quantity,
-                                    $paymentMethod
+                                    // $paymentMethod
                                 );
                             }
 
@@ -169,53 +154,20 @@ class PaymentController extends Controller
 
 
                             // credit parrain
-                            // if ($user->referrer != null) {
-                            //     $referrer = User::where("id", $user->referrer)->first();
-                            //     if ($referrer != null) {
-                            //         $referrer_customer = $referrer->createOrGetStripeCustomer();
-                            //         if ($referrer_customer["currency"] == null) {
-                            //             $referrer_customer = $referrer->updateStripeCustomer(['currency' => 'xaf']);
-                            //         }
-                            //         if (isset($price["currency_options"])
-                            //             && isset($price["currency_options"][$referrer_customer["currency"]])
-                            //         ) {
-                            //             $commission = 0.1 *
-                            //             $price["currency_options"][$referrer_customer["currency"]]["unit_amount"];
-                            //             $trx = new TransactionRequest(
-                            //                 "credit",
-                            //                 $referrer_customer["id"],
-                            //                 $commission,
-                            //                 $referrer_customer["currency"]
-                            //             );
-                            //             $response = (new Wallet())->credit($trx);
-                            //             Log::info(
-                            //                 "REFERRER_ACCOUNT_CREDITED",
-                            //                 [
-                            //                     "transaction" => $trx,
-                            //                     "commission" => $commission,
-                            //                     "referrer_customer" => $referrer_customer,
-                            //                     "referrer" => $referrer,
-                            //                     "price" => $price,
-                            //                     "response" => $response,
-                            //                 ]
-                            //             );
-                            //         } else {
-                            //             Log::error(
-                            //                 "PRICE DOES NOT HAVE MATCHING CURRENCY WITH REFERRER".
-                            //                 json_encode([
-                            //                     "referrer" => $referrer,
-                            //                     "user" => $user,
-                            //                     "price" => $price,
-                            //                 ]),
-                            //                 [
-                            //                     "referrer" => $referrer,
-                            //                     "user" => $user,
-                            //                     "price" => $price,
-                            //                 ]
-                            //             );
-                            //         }
-                            //     }
-                            // }
+                            if ($user->referrer != null) {
+                                $referrer = User::where("id", $user->referrer)->first();
+                                if ($referrer != null) {
+                                    $transaction = processRecharge(
+                                        $referrer,
+                                        $amount * (env("REFERRAL_PERCENTAGE") / 100),
+                                        env("CASHIER_CURRENCY"),
+                                        "CREDIT",
+                                        $this->transactionHistoryService,
+                                        $this->userService,
+                                        // $paymentMethod
+                                    );
+                                }
+                            }
 
                             $results = ["results" => $subscription];
                             $end_date = new \DateTime("now");
@@ -521,5 +473,166 @@ class PaymentController extends Controller
             );
             return response(["error" => "SOMETHING WENT WRONG"]);
         }
+    }
+
+    public function quickPay(Request $request)
+    {
+        try {
+            //code...
+            $request->validate([
+                "firstname" => 'required',
+                "lastname" => 'sometimes',
+                "email" => 'required',
+                "phone" => 'sometimes',
+                'product_name' => 'required|string',
+                'price_id' => 'required|string',
+                'quantity' => 'required|numeric|min:1',
+                'payment_method' => 'required',
+                'birthday' => 'required|date',
+            ]);
+
+            // if ($this->userService->getUserByEmail($request->input("email")) != null) {
+            //     return Response::error("Un compte avec cet email existe deja", 400);
+            // }
+            $user = new User([
+                'first_name' => $request->input('firstname'),
+                'last_name' => $request->input('lastname'),
+                'alias' => explode("@",$request->input("email"))[0],
+                'phone' => str_replace(" ", "", $request->input('phone')),
+                'email' => $request->input('email'),
+                'password' => Hash::make("123456789"),
+                'cip' => bin2hex(random_bytes(3)),
+                'birthday' => $request->input('birthday'),
+                'status' => 0,
+            ]);
+            $user = $this->userService->createAccount($user, false);
+
+            switch ($request->input("payment_method")) {
+                case 'card':
+                    $res = $this->subscriptionService->createCheckout(
+                        $user,
+                        $request->product_name,
+                        $request->price_id,
+                        $request->quantity,
+                        env("EUSER_APP_URL")."/complete-registration?cip=".$user->cip
+                    );
+
+
+                    break;
+                case 'OM':
+                    $price = $this->priceService->getPrice($request->price_id);
+                    $quantity = $request->quantity;
+                    $amount = 0;
+                    if ($quantity >= 10) {
+                        foreach ($price["currency_options"][strtolower(env("CASHIER_CURRENCY"))]["tiers"] as $tier) {
+                            if ($tier["up_to"] == null) {
+                                $amount = $tier["unit_amount"];
+                            }
+                        }
+                    } else {
+                        $nearest = null;
+                        foreach ($price["currency_options"][strtolower(env("CASHIER_CURRENCY"))]["tiers"] as $tier) {
+                            if ($tier["up_to"] != null) {
+                                if ($tier["up_to"] >= $quantity) {
+                                    // $amount = $tier["flat_amount"];
+                                    if ($tier["up_to"] - $quantity < $nearest - $quantity || $nearest === null) {
+                                        $amount = $tier["unit_amount"];
+                                        $nearest = $tier["up_to"];
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    $amount *=  $quantity;
+                    $amount_xaf = round((int) convertCurrency("xaf", $amount));
+                    $order_dto = new DtosSubscriptionOrder(
+                        $user->id,
+                        $request->product_name,
+                        $quantity,
+                        $request->price_id,
+                        strtoupper(env("CASHIER_CURRENCY")),
+                        "SUBSCRIPTION PAYMENT"
+                    );
+                    $order = $this->subscriptionOrderService->addSubscriptionOrder($order_dto);
+                    $ref = UuidV4::uuid4()->toString();
+
+                    $data = [
+                        "currency" => "XAF",
+                        "order_id" => $ref,
+                        "amount" => $amount_xaf,
+                        "return_url" => env("EUSER_APP_URL")."/complete-registration?cip=".$user->cip,
+                        "cancel_url" => env("EUSER_APP_URL")."/complete-registration?cip=".$user->cip,
+                        "notif_url" => "https://e-user-dev.languelite.com/api/v1/payment/callback?uuid=". $ref,
+                        // "return_url" => $request->redirect_url."/dashboard?payment_status=1",
+                        // "cancel_url" => $request->redirect_url."/dashboard?payment_status=-1",
+                        // "notif_url" => env('APP_URL')."/api/v1/payment/callback?uuid=". $ref,
+                        "lang" => "fr",
+                        "reference" =>"DJEDSO".time(),
+                    ];
+                    $results = $this->omService->pay($data);
+                    Log::info("PAYMENT_ORANGE_MONEY:", ["results" => $results]);
+                    if (isset($results['error'])) {
+                        // requests from e-user, data sent to orange, expected response from orange
+                        Log::error(
+                            "PAYMENT_ORANGE_MONEY: Unable to create payment:". json_encode(["results" => $results, "data" => $data, "order" => $order]),
+                            ["results" => $results, "data" => $data, "order" => $order]
+                        );
+                        return Response::error(json_encode($results['error']), 400);
+                    }
+                    $session_dto = new DtoPaymentSession(
+                        $ref,
+                        $order->id,
+                        $request->price_id,
+                        "SUBSCRIPTION",
+                        "ORANGE_MONEY",
+                        $amount,
+                        env("CASHIER_CURRENCY"),
+                        $results["data"]["payment_url"],
+                        $results["data"]["pay_token"],
+                        $results["data"]["notif_token"]
+                    );
+                    $session = $this->paymentSessionService->addPaymentSession($session_dto);
+                    $end_date = new \DateTime("now");
+                    Log::info(
+                        "PAYMENT_ORANGE_MONEY_SUCCESSFUL:"
+                        .json_encode([
+                            "results" => $results,
+                            "data" => $data,
+                            "order" => $order,
+                            "end_date" => $end_date,
+                            "request" => $request->input(),
+                            "session" => $session
+                        ])
+                    );
+                    $res = $results["data"];
+                    break;
+                default:
+                    return Response::error("Mode de paiement inconnu", 400);
+                    break;
+            }
+            Mail::to($user)->send(
+                new CompleteProfile($user->first_name.' '.$user->last_name, env("EUSER_APP_URL")."/complete-registration?cip=".$user->cip)
+            );
+            return Response::success($res, 201);
+        } catch (\Swift_TransportException $e) {
+            // Handle issues related to mail transport (e.g., connection problems)
+            Log::error('Email transport error on quickpay: ' . $e->getMessage());
+            return Response::success([
+                "response" => $res,
+                "user_link" => env("EUSER_APP_URL")."/complete-registration?cip=".$user->cip
+            ], 201);
+            // ... (optional: notify admin, retry, etc.)
+        } catch (\Throwable $th) {
+            //throw $th;
+            Log::error('Technical error on quickpay: ' . json_encode([
+                "message" => $th->getMessage(),
+                "line" => $th->getLine(),
+                "file" => $th->getFile(),
+                "trace" => $th->getTrace(),
+            ]));
+
+            return Response::error("Erreur Technique, veillez reessayer plus tard", 400);
+        }
+
     }
 }

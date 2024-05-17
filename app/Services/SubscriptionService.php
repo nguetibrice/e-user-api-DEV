@@ -138,8 +138,13 @@ class SubscriptionService extends BaseService implements ISubscriptionService
         int $qty,
         PaymentMethod $paymentMethod = null
     ): Subscription {
-        $subscription = $user->newSubscription($product, [$price])
-            ->quantity($qty)->create($paymentMethod);
+        if ($paymentMethod == null) {
+            $subscription = $user->newSubscription($product, [$price])
+                ->quantity($qty)->create();
+        } else {
+            $subscription = $user->newSubscription($product, [$price])
+                ->quantity($qty)->create($paymentMethod);
+        }
         Log::info("SUBSCRIPTION MADE: SUBSCRIPTION CREATED", ["subscription" => $subscription]);
         $subscription_id = $subscription->id;
         Cache::forget($user->getCacheKey());
