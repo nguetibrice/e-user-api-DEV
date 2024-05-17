@@ -17,6 +17,7 @@ use App\Http\Controllers\SubscriptionController;
 use App\Http\Controllers\PasswordResetController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\PaymentMethodsController;
+use App\Http\Controllers\UserLevelsController;
 use App\Http\Controllers\WalletController;
 use App\Models\Subscription;
 use App\Models\SubscriptionAssignment;
@@ -80,6 +81,7 @@ Route::prefix('/payment')->group(function () {
         Route::get('/callback', 'callBack');
         Route::post('/callback', 'callBack');
         Route::get('/test/{id}', 'test');
+        Route::post('/quickpay', 'quickPay');
     });
 });
 
@@ -100,6 +102,7 @@ Route::post('/resent/user/activation_code', [RegisterController::class, 'resendA
 
 Route::get('/subscription/packages', [SubscriptionController::class, 'getPackages']);
 Route::post('/users/search', [UserController::class, 'find'])->middleware('auth:sanctum');
+Route::get('/users/cip/{cip}', [UserController::class, 'getUserFromCip']);
 
 Route::controller(PaymentMethodsController::class)->prefix("payment-methods")->group(function () {
     Route::get('/', 'index')->name('get.all.pm');
@@ -107,6 +110,14 @@ Route::controller(PaymentMethodsController::class)->prefix("payment-methods")->g
     Route::get('/show/{id}', 'show')->name('show.pm');
     Route::put('/update/{id}', 'update');
     Route::delete('/delete/{id}', 'delete');
+});
+
+Route::controller(UserLevelsController::class)->prefix("user-levels")->group(function () {
+    Route::get('/', 'index')->name('user.levels');
+    Route::post('/store', 'store')->name('store.user.levels');
+    // Route::get('/show/{id}', 'show')->name('show.pm');
+    // Route::put('/update/{id}', 'update');
+    // Route::delete('/delete/{id}', 'delete');
 });
 
 Route::middleware(['auth:sanctum', 'verified'])->group(function () {
@@ -131,7 +142,6 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
         Route::get('/customers/visible/all', 'packageFind')->name('showall.user');
         Route::patch('/user/profile', 'updateProfile')->name('update_user');
         Route::patch('/user/password', 'updatePassword');
-        Route::put('/user/guardian', 'updateGuardian');
         Route::delete('/user', 'destroy');
     });
 

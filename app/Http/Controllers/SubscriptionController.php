@@ -116,57 +116,42 @@ class SubscriptionController extends Controller
                     }
                     $result =
                     $this->subscriptionService->makePayment($user, $name, $priceId, $quantity, $paymentMethod);
-                    // if ($user->referrer != null) {
-                    //     $referrer = $this->userService->findOneById($user->referrer);
-                    //     if ($referrer != null) {
-                    //         $referrer_customer = verifyCustomer($referrer);
-                    //         if (isset($price["currency_options"])
-                    //             && isset($price["currency_options"][$referrer_customer["currency"]])
-                    //         ) {
-                    //             $commission = 0.1
-                    //             * $price["currency_options"][$referrer_customer["currency"]]["unit_amount"];
-                    //             processRecharge(
-                    //                 $referrer,
-                    //                 $commission,
-                    //                 $referrer_customer["currency"],
-                    //                 $type = "CREDIT",
-                    //                 $this->transactionHistoryService,
-                    //                 $this->userService,
-                    //                 $paymentMethod
-                    //             );
-                    //             $trx = new TransactionRequest(
-                    //                 "credit",
-                    //                 $referrer_customer["id"],
-                    //                 $commission,
-                    //                 $referrer_customer["currency"]
-                    //             );
-                    //             $response = (new Wallet(
-                    //                 $this->transactionHistoryService,
-                    //                 $this->userService,
-                    //             ))->credit($trx);
-                    //             Log::info(
-                    //                 "REFERRER_ACCOUNT_CREDITED",
-                    //                 [
-                    //                     "transaction" => $trx,
-                    //                     "commission" => $commission,
-                    //                     "referrer_customer" => $referrer_customer,
-                    //                     "referrer" => $referrer,
-                    //                     "price" => $price,
-                    //                     "response" => $response,
-                    //                 ]
-                    //             );
-                    //         } else {
-                    //             Log::error(
-                    //                 "PRICE DOES NOT HAVE MATCHING CURRENCY WITH REFERRER",
-                    //                 [
-                    //                     "referrer" => $referrer,
-                    //                     "user" => $user,
-                    //                     "price" => $price,
-                    //                 ]
-                    //             );
-                    //         }
-                    //     }
-                    // }
+                    if ($user->referrer != null) {
+                        $referrer = User::where("id", $user->referrer)->first();
+                        $amount = 0;
+                        if ($quantity >= 10) {
+                            foreach ($price["currency_options"][strtolower(env("CASHIER_CURRENCY"))]["tiers"] as $tier) {
+                                if ($tier["up_to"] == null) {
+                                    $amount = $tier["unit_amount"];
+                                }
+                            }
+                        } else {
+                            $nearest = null;
+                            foreach ($price["currency_options"][strtolower(env("CASHIER_CURRENCY"))]["tiers"] as $tier) {
+                                if ($tier["up_to"] != null) {
+                                    if ($tier["up_to"] >= $quantity) {
+                                        // $amount = $tier["flat_amount"];
+                                        if ($tier["up_to"] - $quantity < $nearest - $quantity || $nearest === null) {
+                                            $amount = $tier["unit_amount"];
+                                            $nearest = $tier["up_to"];
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        $amount *=  $quantity;
+                        if ($referrer != null) {
+                            $transaction = processRecharge(
+                                $referrer,
+                                $amount * (env("REFERRAL_PERCENTAGE") / 100),
+                                env("CASHIER_CURRENCY"),
+                                "CREDIT",
+                                $this->transactionHistoryService,
+                                $this->userService,
+                                // $paymentMethod
+                            );
+                        }
+                    }
                     $end_date = new \DateTime("now");
                     Log::info(
                         "PAYMENT_CARD_SUCCESSFUL:",
@@ -182,23 +167,23 @@ class SubscriptionController extends Controller
                     return Response::success(['subscription' => $result]);
                     break;
                 case 'OM':
-                    if (!isset($price["currency_options"][strtolower($request->currency)])) {
-                        return Response::error("Amount in desired currency not found", 400);
-                    }
-                    if (!isset($price["currency_options"][strtolower($request->currency)])) {
-                        return Response::error("Currency not tierred", 400);
-                    }
+                    // if (!isset($price["currency_options"][strtolower($request->currency)])) {
+                    //     return Response::error("Amount in desired currency not found", 400);
+                    // }
+                    // if (!isset($price["currency_options"][strtolower($request->currency)])) {
+                    //     return Response::error("Currency not tierred", 400);
+                    // }
 
                     $amount = 0;
                     if ($quantity >= 10) {
-                        foreach ($price["currency_options"][strtolower($request->currency)]["tiers"] as $tier) {
+                        foreach ($price["currency_options"][strtolower(env("CASHIER_CURRENCY"))]["tiers"] as $tier) {
                             if ($tier["up_to"] == null) {
                                 $amount = $tier["unit_amount"];
                             }
                         }
                     } else {
                         $nearest = null;
-                        foreach ($price["currency_options"][strtolower($request->currency)]["tiers"] as $tier) {
+                        foreach ($price["currency_options"][strtolower(env("CASHIER_CURRENCY"))]["tiers"] as $tier) {
                             if ($tier["up_to"] != null) {
                                 if ($tier["up_to"] >= $quantity) {
                                     // $amount = $tier["flat_amount"];
@@ -210,8 +195,8 @@ class SubscriptionController extends Controller
                             }
                         }
                     }
-
                     $amount *=  $quantity;
+                    $amount_xaf = round((int) convertCurrency("xaf", $amount));;
                     $order_dto = new DtoSubscriptionOrder(
                         $user->id,
                         $name,$quantity,
@@ -225,7 +210,7 @@ class SubscriptionController extends Controller
                     $data = [
                         "currency" => strtoupper($request->currency),
                         "order_id" => $ref,
-                        "amount" => $amount,
+                        "amount" => $amount_xaf,
                         // "return_url" => "https://e-user-dev.languelite.com/dashboard?payment_status=1",
                         // "cancel_url" => "https://e-user-dev.languelite.com/dashboard?payment_status=-1",
                         // "notif_url" => "https://e-user-dev.languelite.com/api/v1/payment/callback?uuid=". $ref,
@@ -252,7 +237,7 @@ class SubscriptionController extends Controller
                         "SUBSCRIPTION",
                         "ORANGE_MONEY",
                         $amount,
-                        "XAF",
+                        env("CASHIER_CURRENCY"),
                         $results["data"]["payment_url"],
                         $results["data"]["pay_token"],
                         $results["data"]["notif_token"]

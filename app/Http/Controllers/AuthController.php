@@ -38,12 +38,14 @@ class AuthController extends Controller
      */
     public function openSession(Request $request): JsonResponse
     {
-        // return Response::error($request->input('password'), HTTPResponse::HTTP_FORBIDDEN);
-
         $request->validate(['alias' => 'required|string', 'password' => 'required|string', 'ip' => 'required|ip']);
 
         $alias = $request->input('alias');
 
+        if ($this->userService->verifySuspension($alias)) {
+            $reason = Lang::get("Votre compte a ete suspendu, veillez contacter le support pour plus de details");
+            return Response::error($reason, HTTPResponse::HTTP_FORBIDDEN);
+        }
         if (!$this->userService->hasValidCredentials($alias, $request->input('password'))) {
             $reason = Lang::get("'alias' & 'password' do not match with our records");
 
@@ -63,11 +65,11 @@ class AuthController extends Controller
                 // password session
                 return Response::success($data, Status::HTTP_CREATED);
         }
-        // $customer = verifyCustomer($user);
+        $customer = verifyCustomer($user);
 
         return Response::success([
             "token" => $this->userService->generateUserTokenFromIp($user, $request->input('ip')),
-            // 'wallet_balance'=> strtoupper($customer["default_currency"])." " . $customer["balance"]
+            'wallet_balance'=> strtoupper($customer["default_currency"])." " . (-1 * ( (int) $customer["balance"]))
         ]);
     }
 

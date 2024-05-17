@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Currency;
 use Illuminate\Support\Facades\Cache;
 use App\Services\Contracts\ICurrencyService;
+use Illuminate\Support\Facades\Http;
 
 class CurrencyService extends BaseService implements ICurrencyService
 {
@@ -68,5 +69,15 @@ class CurrencyService extends BaseService implements ICurrencyService
     protected function getModelObject(): Currency
     {
         return new Currency();
+    }
+
+    public function fetchCurrencyByCode(string $code)
+    {
+        $res = Http::acceptJson()->get(env("E_USER_CURRENCIES_BASE_URL")."/currency/by-code/$code");
+        if ($res->status()!= 200) {
+            # log here
+            return false;
+        }
+        return json_decode($res->body(), true)["data"];
     }
 }

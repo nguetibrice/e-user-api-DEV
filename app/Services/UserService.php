@@ -89,12 +89,30 @@ class UserService extends BaseService implements IUserService
     /**
      * @inheritDoc
      */
-    public function createAccount(User $user): User
+    public function createAccount(User $user, $sendCode = true): User
     {
         $this->insert($user);
 
-        $user->createPin();
+        if ($sendCode) {
+            $user->createPin();
 
+            // trigger event to send asynchronous email or sms notification to the user
+            event(new Registered($user));
+        }
+
+        return $user;
+    }
+
+    /**
+     * @inheritDoc
+     */
+    public function updateAccount(User $user, $data): User
+    {
+        $user::update($data);
+
+        $this->update($user);
+
+        $user->createPin();
         // trigger event to send asynchronous email or sms notification to the user
         event(new Registered($user));
 
@@ -139,8 +157,18 @@ class UserService extends BaseService implements IUserService
     public function hasValidCredentials(string $alias, string $password): bool
     {
         $credentials = ['alias' => $alias, 'password' => $password];
-
         return Auth::attempt($credentials);
+    }
+
+    /**
+     * @inheritDoc
+     */
+    public function verifySuspension(string $alias): bool
+    {
+        if (User::where("alias",$alias)->where("status","!=","1")->exists()) {
+            return true;
+        }
+        return false;
     }
 
     /**

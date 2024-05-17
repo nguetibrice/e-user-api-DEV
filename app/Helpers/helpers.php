@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\User;
+use App\Services\Contracts\ICurrencyService;
 use App\Services\Contracts\ITransactionHistoryService;
 use App\Services\Contracts\IUserService;
 use App\Wallet\Stripe\Requests\TransactionRequest;
@@ -20,7 +21,7 @@ function processRecharge(
     User $target = null
 ) {
 
-    if ($type == "CREDIT") {
+    if ($type == "CREDIT" && $paymentMethod != null) {
         $user->charge($amount,$paymentMethod);
     }
     if ($type == "TRANSFER") {
@@ -53,6 +54,7 @@ function processRecharge(
 
 function verifyCustomer(User $user) : Customer
 {
+    Cache::forget($user->getCacheKey());
     if($user->stripeId() == null) {
         $customer = $user->createOrGetStripeCustomer();
     }else{
@@ -62,14 +64,14 @@ function verifyCustomer(User $user) : Customer
     return $customer;
 }
 
-function convertCurrency($initialCurrency, $targetCurrency, $amount)
+function convertCurrency($destinationCurrency, $amount)
 {
-    // return Currency::convert()
-    //     ->from(strtoupper($initialCurrency))
-    //     ->to(strtoupper($targetCurrency))
-    //     ->round(2)
-    //     ->amount((float) $amount)
-    //     ->withOptions(['query' => ['access_key' => env('CURRENCY_API_ID')]])
-    //     ->throw()
-    //     ->get();
+    if ($destinationCurrency == "xaf" || $destinationCurrency == "XAF") {
+        $amount = $amount * env("EUR_DEFAULT_XAF_VALUE", 655);
+        $destinationCurrency = "EUR";
+    }
+    $currencyService = app(ICurrencyService::class);
+    $currency = $currencyService->fetchCurrencyByCode($destinationCurrency);
+
+    return $amount * ($currency["rate"] == null? 0 : $currency["rate"]);
 }

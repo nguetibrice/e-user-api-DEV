@@ -33,5 +33,10 @@ interface ICurrencyService extends IBaseService
      */
     public function getCurrenciesByKey(string $key, $value);
 
+    /**
+     * Get the specified currency by code.
+     */
+    public function fetchCurrencyByCode(string $code);
+
 
 }
